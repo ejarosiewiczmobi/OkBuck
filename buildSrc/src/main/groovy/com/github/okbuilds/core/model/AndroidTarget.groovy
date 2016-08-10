@@ -1,6 +1,7 @@
 package com.github.okbuilds.core.model
 
 import com.android.build.gradle.api.BaseVariant
+import com.android.build.gradle.internal.variant.BaseVariantData
 import com.android.builder.model.ClassField
 import com.android.builder.model.SourceProvider
 import com.android.manifmerger.ManifestMerger2
@@ -13,6 +14,7 @@ import groovy.xml.StreamingMarkupBuilder
 import org.apache.commons.codec.digest.DigestUtils
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
+import org.gradle.api.Task
 import org.gradle.api.logging.Logger
 
 /**
@@ -39,6 +41,8 @@ abstract class AndroidTarget extends JavaLibTarget {
         if (baseVariant.buildType.applicationIdSuffix != null) {
             suffix += baseVariant.buildType.applicationIdSuffix
         }
+
+        baseVariant
         applicationIdSuffix = suffix
         applicationId = baseVariant.applicationId - applicationIdSuffix
         versionName = baseVariant.mergedFlavor.versionName
@@ -57,12 +61,14 @@ abstract class AndroidTarget extends JavaLibTarget {
 
     @Override
     Scope getMain() {
+        Set<File> srcDirs = baseVariant.sourceSets.collect { SourceProvider provider ->
+            provider.javaDirectories
+        }.flatten() as Set<File>
+
         return new Scope(
                 project,
                 ["compile", "${buildType}Compile", "${flavor}Compile", "${name}Compile"] as Set,
-                baseVariant.sourceSets.collect { SourceProvider provider ->
-                    provider.javaDirectories
-                }.flatten() as Set<File>,
+                srcDirs,
                 null,
                 extraJvmArgs)
     }
@@ -76,6 +82,28 @@ abstract class AndroidTarget extends JavaLibTarget {
                 project.files("src/test/java") as Set<File>,
                 project.file("src/test/resources"),
                 extraJvmArgs)
+    }
+
+    @Override
+    Set<GradleSourcegen> getGradleSourcegen() {
+        Set<GradleSourcegen> tasks = super.getGradleSourcegen()
+        // SqlDelight support
+        if (project.plugins.hasPlugin('com.squareup.sqldelight')) {
+            BaseVariantData data = baseVariant.variantData
+            Task sqlDelightGen = data.sourceGenTask.getDependsOn().find {
+                it instanceof Task && it.name.toLowerCase().contains("sqldelight")
+            } as Task
+            tasks.add(new GradleSourcegen(sqlDelightGen,
+                    srcDirNames.collect { "src/${it}/sqldelight/**/*.sq" },
+                    sqlDelightGen.outputs.files[0]))
+        }
+        return tasks
+    }
+
+    Set<String> getSrcDirNames() {
+        return baseVariant.sourceSets.collect { SourceProvider provider ->
+            provider.name
+        }
     }
 
     public boolean getRobolectric() {
